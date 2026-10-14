@@ -1,0 +1,46 @@
+# Shared by bash and zsh on every machine; sourced by init.bash / init.zsh.
+# Keep it POSIX. Machine-specific setup and secrets stay in the local rc file.
+
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) PATH="$HOME/.local/bin:$PATH"; export PATH ;;
+esac
+
+# This machine's projects. pick-project lists the git repos directly under
+# PROJECTS_ROOT; cmux and cdb start in DEFAULT_PROJECT, or open the picker
+# when it's blank. Answered once at `chezmoi init`; change them with
+# `chezmoi init --prompt`, or `chezmoi edit-config` then `chezmoi apply`.
+{{- $root := "~" }}
+{{- if hasKey . "projectsRoot" }}{{ $root = .projectsRoot }}{{ end }}
+{{- $default := "" }}
+{{- if hasKey . "defaultProject" }}{{ $default = .defaultProject }}
+{{- else if hasKey . "primaryDir" }}{{ $default = .primaryDir }}{{/* config from before the split, until `chezmoi init` */}}
+{{- end }}
+{{- if hasPrefix "~" $root }}
+export PROJECTS_ROOT="$HOME{{ trimPrefix "~" $root }}"
+{{- else }}
+export PROJECTS_ROOT={{ $root | quote }}
+{{- end }}
+{{- if hasPrefix "~" $default }}
+export DEFAULT_PROJECT="$HOME{{ trimPrefix "~" $default }}"
+{{- else }}
+export DEFAULT_PROJECT={{ $default | quote }}
+{{- end }}
+
+# Claude in this terminal, no tmux. cmux (in ~/.local/bin) is the tmux version.
+#   cdb               default project, or pick one if this machine has none
+#   cdb <project>     that project (a partial name opens the picker, filtered)
+#   cdb -p            pick a project
+# Anything starting with - goes to claude, e.g. `cdb --resume`.
+cdb() {
+  if [ "$1" = -p ]; then
+    shift; _cdb_dir=$(pick-project) || return
+  elif [ -n "$1" ] && [ "${1#-}" = "$1" ]; then
+    _cdb_dir=$(pick-project "$1") || return; shift
+  elif [ -n "$DEFAULT_PROJECT" ] && [ -d "$DEFAULT_PROJECT" ]; then
+    _cdb_dir=$DEFAULT_PROJECT
+  else
+    _cdb_dir=$(pick-project) || return
+  fi
+  clear && cd "$_cdb_dir" && claude-bypass "$@"
+}

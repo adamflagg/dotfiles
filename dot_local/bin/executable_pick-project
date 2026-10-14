@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# pick-project - choose one of this machine's projects and print its path.
+# Must run on macOS's /bin/bash 3.2 (see README).
+
+help() {
+  cat <<'HELP'
+pick-project - choose one of this machine's projects and print its path
+
+USAGE
+  pick-project            Pick a project (fzf if installed, else a numbered menu)
+  pick-project <query>    An exact project name prints straight away; otherwise
+                          the picker opens filtered to <query>, and a single
+                          match is taken without asking
+  pick-project --list     Print every project name, one per line
+  pick-project -h         This help
+
+A project is a folder directly under $PROJECTS_ROOT that has a .git folder.
+Worktrees have a .git file instead, so they stay out of the list. To hide a
+project on this machine, add its name to ~/.config/pick-project/exclude (one
+per line, # starts a comment); that file is local, not managed by chezmoi.
+
+Exits 1 if nothing was picked.
+HELP
+}
+
+root=${PROJECTS_ROOT:-$HOME}
+exclude=${XDG_CONFIG_HOME:-$HOME/.config}/pick-project/exclude
+
+list() {
+  local skip d n
+  skip=$'\n'$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$exclude" 2>/dev/null)$'\n'
+  for d in "$root"/*/; do
+    [[ -d $d.git ]] || continue
+    n=$(basename "$d")
+    [[ $skip == *$'\n'"$n"$'\n'* ]] && continue
+    echo "$n"
+  done
+}
+
+case $1 in
+  -h|--help) help; exit 0 ;;
+  --list)    list; exit 0 ;;
+esac
+
+query=$1
+names=$(list)
+[[ -n $names ]] || { echo "pick-project: no git repos under $root" >&2; exit 1; }
+
+if [[ -n $query ]] && grep -qxF -- "$query" <<<"$names"; then
+  echo "$root/$query"; exit 0
+fi
+
+if command -v fzf >/dev/null 2>&1; then
+  pick=$(fzf --prompt='project> ' --query="$query" --select-1 --reverse --height=40% <<<"$names") || exit 1
+else
+  if [[ -n $query ]]; then
+    hits=$(grep -iF -- "$query" <<<"$names")
+    case $(grep -c . <<<"$hits") in
+      1) echo "$root/$hits"; exit 0 ;;
+      0) ;;
+      *) names=$hits ;;
+    esac
+  fi
+  opts=()
+  while IFS= read -r n; do opts+=("$n"); done <<<"$names"
+  PS3=$'\n'"project number: "
+  COLUMNS=1  # one entry per line
+  select pick in "${opts[@]}"; do [[ -n $pick ]] && break; done
+  [[ -n $pick ]] || exit 1  # Ctrl-D
+fi
+echo "$root/$pick"

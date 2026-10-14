@@ -1,0 +1,6 @@
+# Tools every machine needs. run_onchange_before_install-packages.sh.tmpl
+# installs whichever are missing, and runs again whenever this list changes.
+# Names must be the same in Homebrew and apt.
+packages:
+  - tmux
+  - fzf

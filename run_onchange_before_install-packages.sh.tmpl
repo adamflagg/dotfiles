@@ -1,0 +1,25 @@
+#!/bin/sh
+# Install the tools in .chezmoidata/packages.yaml that this machine is missing:
+# Homebrew where it exists (macOS), else apt, else just say what's missing.
+# Never fails the apply; a failed install is reported and skipped.
+pkgs="{{ .packages | join " " }}"
+
+if command -v brew >/dev/null 2>&1; then
+  for p in $pkgs; do
+    brew list --formula "$p" >/dev/null 2>&1 || brew install "$p" || echo "chezmoi: brew install $p failed" >&2
+  done
+elif command -v apt-get >/dev/null 2>&1; then
+  missing=""
+  for p in $pkgs; do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done
+  if [ -n "$missing" ]; then
+    sudo=""; [ "$(id -u)" -eq 0 ] || sudo=sudo
+    # shellcheck disable=SC2086  # $missing is a word list
+    { $sudo apt-get update -qq && $sudo apt-get install -y $missing; } ||
+      echo "chezmoi: couldn't apt-get install$missing; install it yourself" >&2
+  fi
+else
+  for p in $pkgs; do
+    command -v "$p" >/dev/null 2>&1 || echo "chezmoi: $p is missing and there's no brew or apt here; install it yourself" >&2
+  done
+fi
+exit 0

@@ -1,0 +1,10 @@
+README.md
+{{- /* Unraid: /root is RAM, so ~/.bashrc is rebuilt every boot and a
+       one-time hook would be lost; init.bash is loaded from ~/.bashrc.d instead.
+       Packages come from un-get, not brew or apt. */}}
+{{- if eq .chezmoi.os "linux" }}
+{{-   if eq (get (.chezmoi.osRelease | default dict) "id") "unraid-os" }}
+hook-shell-rc.sh
+install-packages.sh
+{{-   end }}
+{{- end }}

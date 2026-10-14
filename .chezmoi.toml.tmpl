@@ -1,0 +1,11 @@
+{{- /* Per-machine answers, asked once at `chezmoi init` and kept in
+       ~/.config/chezmoi/chezmoi.toml (not in git). Change them later with
+       `chezmoi init --prompt` (asks again), or `chezmoi edit-config` then
+       `chezmoi apply`. */ -}}
+{{- $defaultRoot := "~" -}}
+{{- if eq .chezmoi.os "darwin" -}}{{- $defaultRoot = "~/Projects" -}}{{- end -}}
+{{- $projectsRoot := promptStringOnce . "projectsRoot" "Projects root (the picker lists the git repos directly under it)" $defaultRoot -}}
+{{- $defaultProject := promptStringOnce . "defaultProject" "Default project (cmux and cdb start here; leave blank to pick each time)" "" -}}
+[data]
+    projectsRoot = {{ $projectsRoot | quote }}
+    defaultProject = {{ $defaultProject | quote }}

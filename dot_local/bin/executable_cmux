@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# cmux - run Claude in tmux, one session per workstream. `cmux -h` for usage;
+# the help text is the documentation, so keep it in step with the code.
+# Must run on macOS's /bin/bash 3.2: no mapfile, no EPOCHSECONDS, no `set -u`
+# (3.2 treats an empty "${arr[@]}" as unbound).
+
+help() {
+  cat <<'HELP'
+cmux - run Claude in tmux, one session per workstream
+
+Each workstream lives in its own tmux session, so several can run side by
+side and any of them can be dropped and picked up again later. Closing
+Claude (/exit, or Ctrl-C twice) closes its session.
+
+USAGE
+  cmux                   Resume or start a workstream (see below)
+  cmux <word>            Resume session <word> if it's running; else start a
+                         session in project <word> if there is one; else
+                         start a new session called <word>
+  cmux <word> <args>     Same, and pass <args> to claude when starting
+  cmux -p [<name>]       Pick the project, even on a machine with a default
+                         one (bare: the menu, with projects in it)
+  cmux --<flag> ...      Show the menu; flags go to claude if you start a new
+                         session, e.g. `cmux --resume`
+  cmux -k <name>         Kill session <name>
+  cmux -h | --help       This help
+
+WHERE NEW SESSIONS START
+  In $DEFAULT_PROJECT if this machine has one (set at `chezmoi init`).
+  Otherwise you pick from the git repos under $PROJECTS_ROOT (see
+  `pick-project -h`), and a session started from a project is named after it
+  unless you gave a name. For a one-off elsewhere:
+  DEFAULT_PROJECT=~/other cmux <name>.
+
+WHAT A BARE `cmux` DOES
+  On a machine with a default project:
+    No sessions running    Starts one named "claude" ($CMUX_SESSION overrides)
+    One session running    Resumes it straight away, no menu
+    Several running        Shows a menu of sessions, most recently used first
+  On a machine without one (or with -p), always one menu: running sessions
+  first, then projects. Pick a session to resume it, or a project to start
+  its session (or resume it, if it's already running).
+
+      login-bug        3m   @  ✳ fix the login redirect
+      api-cleanup      2h      ⠂ splitting the user routes
+      repo-template    project
+
+    Columns: name, time since last activity, @ if another device is
+    attached, and Claude's conversation title. A spinner (⠂) instead of ✳
+    means Claude is busy. Type to filter; Enter picks; Esc cancels. Typing a
+    name that matches nothing and pressing Enter starts a new session with
+    that name. (Without fzf it's a numbered menu: a number picks, a name
+    starts one, Ctrl-D cancels.)
+
+  With one session running, you get the menu instead when you're inside
+  tmux (so you can start another) or when you pass args.
+
+NOTES
+  - Claude runs through claude-bypass: permission checks off, or auto mode
+    where Claude Code refuses that (as root).
+  - If Claude exits with an error, the pane waits for Enter so you can read
+    it before the session closes.
+  - Inside tmux, cmux switches your client to the session instead of
+    nesting tmux in tmux.
+  - Resuming from outside tmux detaches any other device on that session.
+  - Session names can't contain . : or spaces; they become -.
+  - Tab completes session names (and project names for `cmux <word>`).
+  - Killing a session doesn't lose the conversation:
+    `cmux <name> --resume` lets you pick it up again.
+
+TMUX KEYS (prefix is Ctrl-b)
+  prefix d               Detach: drop this workstream, leave it running
+  prefix $               Rename the current session
+  prefix s               Session picker with live preview
+  prefix ( / )           Previous / next session
+HELP
+}
+
+go() {
+  if [[ -n $TMUX ]]; then exec tmux switch-client -t "=$1"; else exec tmux attach -d -t "=$1"; fi
+}
+
+root=${PROJECTS_ROOT:-$HOME}
+has_default() { [[ -n $DEFAULT_PROJECT && -d $DEFAULT_PROJECT ]]; }
+
+# menu: offer labels[], print the matching keys[] entry, or "new:<text>" when
+# typed text matches nothing. Returns 1 if cancelled.
+menu() {
+  local i out sel
+  if command -v fzf >/dev/null 2>&1; then
+    out=$(for (( i = 0; i < ${#keys[@]}; i++ )); do printf '%s\t%s\n' "${keys[i]}" "${labels[i]}"; done |
+      fzf --delimiter=$'\t' --with-nth=2.. --print-query --no-sort --reverse --height=40% \
+        --prompt='cmux> ' --header='Enter picks · a name matching nothing starts a new session')
+    (( $? > 1 )) && return 1  # Esc or Ctrl-C
+    sel=$(sed -n 2p <<<"$out")
+    if [[ -n $sel ]]; then echo "${sel%%$'\t'*}"; return; fi
+    out=$(sed -n 1p <<<"$out")
+    [[ -n $out ]] && { echo "new:$out"; return; }
+    return 1
+  fi
+  PS3=$'\n'"number to pick, or a name to start: "
+  local COLUMNS=1  # one entry per line
+  select sel in "${labels[@]}"; do
+    if [[ -n $sel ]]; then echo "${keys[REPLY-1]}"; return; fi
+    [[ -n $REPLY && $REPLY == *[!0-9]* ]] && { echo "new:$REPLY"; return; }
+  done
+  return 1  # Ctrl-D
+}
+
+[[ $1 == -h || $1 == --help ]] && { help; exit 0; }
+if [[ $1 == -k ]]; then
+  [[ -n $2 ]] || { echo "usage: cmux -k <session>" >&2; exit 1; }
+  exec tmux kill-session -t "=$2"
+fi
+
+pick=""
+[[ $1 == -p ]] && { pick=1; shift; }
+word=""
+if (( $# )) && [[ $1 != -* ]]; then word=$1; shift; fi
+name=$word dir=""
+
+if [[ -z $name ]]; then
+  now=$(date +%s)
+  keys=() labels=()
+  while IFS=$'\t' read -r act n att title; do
+    s=$(( now - act ))
+    if   (( s < 60 ));    then ago=now
+    elif (( s < 3600 ));  then ago=$(( s / 60 ))m
+    elif (( s < 86400 )); then ago=$(( s / 3600 ))h
+    else                       ago=$(( s / 86400 ))d; fi
+    keys+=("s:$n")
+    labels+=("$(printf '%-16s %-4s %-2s %s' "$n" "$ago" "$att" "$title")")
+  done < <(tmux ls -F $'#{session_activity}\t#S\t#{?session_attached,@,}\t#{pane_title}' 2>/dev/null | sort -rn)
+  running=${#keys[@]}
+
+  if [[ -z $pick ]] && has_default && (( running == 0 )); then
+    name=${CMUX_SESSION:-claude}
+  elif [[ -z $pick ]] && has_default && (( running == 1 && $# == 0 )) && [[ -z $TMUX ]]; then
+    name=${keys[0]#s:}  # single workstream: skip the menu
+  else
+    if [[ -n $pick ]] || ! has_default; then
+      while IFS= read -r n; do
+        [[ -n $n ]] || continue
+        keys+=("p:$n")
+        labels+=("$(printf '%-16s %s' "$n" project)")
+      done < <(pick-project --list)
+    fi
+    choice=$(menu) || exit 1
+    case $choice in
+      p:*)   name=${choice#p:}; dir=$root/$name ;;
+      new:*) word=${choice#new:}; name=$word ;;
+      *)     name=${choice#s:} ;;
+    esac
+  fi
+fi
+
+name=${name//[.: ]/-}  # tmux rejects . and : in session names
+if tmux has-session -t "=$name" 2>/dev/null; then
+  (( $# )) && echo "cmux: '$name' already running; ignoring args: $*"
+  go "$name"
+fi
+
+if [[ -z $dir && -n $word ]] && pick-project --list | grep -qxF -- "$word"; then
+  dir=$root/$word
+fi
+if [[ -z $dir ]]; then
+  if [[ -z $pick ]] && has_default; then
+    dir=$DEFAULT_PROJECT
+  else
+    dir=$(pick-project) || exit 1
+    [[ -n $word ]] || name=$(basename "$dir")
+    name=${name//[.: ]/-}
+    tmux has-session -t "=$name" 2>/dev/null && go "$name"
+  fi
+fi
+
+args=""
+(( $# )) && args=$(printf ' %q' "$@")
+# No shell afterwards: Claude exiting closes the session. On an error, wait so
+# the message can be read first.
+cmd="claude-bypass$args || { printf '\\nclaude exited with status %s; press Enter to close ' \$?; read -r _; }"
+if [[ -n $TMUX ]]; then
+  tmux new -d -s "$name" -c "$dir" "$cmd" && go "$name"
+else
+  exec tmux new -s "$name" -c "$dir" "$cmd"
+fi

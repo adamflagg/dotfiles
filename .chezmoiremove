@@ -1,0 +1,3 @@
+# Targets chezmoi deletes on apply: files whose source was removed from this repo.
+.local/bin/cdbdt
+.local/bin/cdbdk

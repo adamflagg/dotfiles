@@ -1,0 +1,9 @@
+#!/bin/sh
+# claude-bypass - start claude with permission checks off, passing any args on.
+# Claude Code refuses --dangerously-skip-permissions as root unless
+# IS_SANDBOX=1 (e.g. on unraid), so there it starts in auto mode instead.
+if [ "$(id -u)" -eq 0 ] && [ "$IS_SANDBOX" != 1 ]; then
+  echo "claude-bypass: running as root, so using auto mode (bypass needs IS_SANDBOX=1 as root)" >&2
+  exec claude --permission-mode auto "$@"
+fi
+exec claude --dangerously-skip-permissions "$@"

@@ -1,0 +1,46 @@
+## Atuin client config -- identical on every machine (morty, Claude LXC, MBP, Mac Mini),
+## deployed by chezmoi to ~/.config/atuin/config.toml. Unset keys keep Atuin's defaults.
+## Background: docker repo docs/SHELL-HISTORY.md.
+
+## Self-hosted server (stacks/atuin). Plain HTTP: history is end-to-end
+## encrypted client-side; only the login exchange crosses the LAN/tailnet.
+sync_address = "http://10.0.20.15:8888"
+
+## Sync at most once a minute, after a command finishes (default 5m).
+sync_frequency = "1m"
+
+## Self-hosted; nothing upstream to check against.
+update_check = false
+
+## Never record (so never sync) a command that can carry a secret on its line. Regexes,
+## matched anywhere in the command. morty's `secrets set KEY VALUE` takes the value as a
+## word, and `printf ... | secrets set KEY` carries it in the pipe; the harmless forms
+## (`secrets set KEY` with its hidden prompt, `--gen`) are dropped too, which costs nothing.
+history_filter = [
+  "\\bsecrets\\s+(set|ensure)\\b",
+]
+
+## Atuin's default for new installs: Enter runs the selected command, Tab puts it
+## on the prompt for editing. Set false to make Enter edit as well.
+enter_accept = true
+
+## hishtory parity: newest first, always. The default "fuzzy" re-sorts matches by
+## how tightly they match, burying today's run under a closer match from 2024.
+## "fulltext" = each word a substring of the command, in strict date order.
+search_mode = "fulltext"
+
+## hishtory parity: search bar on top, newest result right under it, scroll down.
+## The default draws the list bottom-up from a bar at the bottom.
+invert = true
+
+[ui]
+## hishtory-style table: absolute time, and which machine and folder every command ran in.
+## Inside Ctrl-R: Ctrl-R again cycles global/host/session/directory filter,
+## Ctrl-O opens the full detail view of the selected command.
+columns = ["exit", "duration", "datetime", { type = "host", width = 18 }, { type = "directory", width = 30 }, "command"]
+
+[search]
+## Show every machine's commands. The default "auto" hides commands recorded by
+## another shell: the Macs record zsh, morty and the LXC bash, so post-cutover
+## history silently stopped crossing between them (pre-Atuin imports have no shell).
+shells = "all"

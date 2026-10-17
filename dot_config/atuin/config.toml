@@ -17,7 +17,7 @@ update_check = false
 ## word, and `printf ... | secrets set KEY` carries it in the pipe; the harmless forms
 ## (`secrets set KEY` with its hidden prompt, `--gen`) are dropped too, which costs nothing.
 history_filter = [
-  "\\bsecrets\\s+(set|ensure)\\b",
+  "\\bsecrets\\s+set\\b",
 ]
 
 ## Atuin's default for new installs: Enter runs the selected command, Tab puts it
